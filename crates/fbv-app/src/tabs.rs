@@ -14,15 +14,83 @@ pub enum CenterRequest {
     Net(usize),
 }
 
+/// Drawable outline for one part, precomputed in world space.
+/// Two-pin chip parts (R/C/L/...) get a box oriented along their pin axis,
+/// like OpenBoardView; everything else gets an expanded bounding box.
+#[derive(Debug, Clone, Copy)]
+pub struct PartOutline {
+    pub corners: [Point; 4],
+    pub center: Point,
+}
+
+/// Computes outlines for every part (None for dummies/empty parts).
+pub fn compute_part_outlines(model: &BoardModel) -> Vec<Option<PartOutline>> {
+    model
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(idx, part)| {
+            if part.is_dummy || part.pins.is_empty() {
+                return None;
+            }
+            let pins: Vec<&fbv_core::Pin> = part
+                .pins
+                .iter()
+                .map(|&pi| &model.pins[pi as usize])
+                .collect();
+            let max_r = pins.iter().fold(2.0f32, |a, p| a.max(p.radius));
+            let margin = (max_r * 1.4).max(4.0);
+
+            if pins.len() == 2 {
+                let (a, b) = (pins[0].pos, pins[1].pos);
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let len = (dx * dx + dy * dy).sqrt();
+                if len > 0.01 {
+                    let (ux, uy) = (dx / len, dy / len);
+                    let (vx, vy) = (-uy, ux);
+                    let cx = (a.x + b.x) / 2.0;
+                    let cy = (a.y + b.y) / 2.0;
+                    let hl = len / 2.0 + margin;
+                    let hw = max_r + margin * 0.6;
+                    let corner = |su: f32, sv: f32| {
+                        Point::new(cx + su * ux * hl + sv * vx * hw, cy + su * uy * hl + sv * vy * hw)
+                    };
+                    return Some(PartOutline {
+                        corners: [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)],
+                        center: Point::new(cx, cy),
+                    });
+                }
+            }
+
+            let (min, max) = model.part_bounds(idx)?;
+            let min = Point::new(min.x - margin, min.y - margin);
+            let max = Point::new(max.x + margin, max.y + margin);
+            Some(PartOutline {
+                corners: [
+                    Point::new(min.x, min.y),
+                    Point::new(max.x, min.y),
+                    Point::new(max.x, max.y),
+                    Point::new(min.x, max.y),
+                ],
+                center: Point::new((min.x + max.x) / 2.0, (min.y + max.y) / 2.0),
+            })
+        })
+        .collect()
+}
+
 pub struct BoardTab {
     pub board_id: i64,
     pub title: String,
     pub model: Arc<BoardModel>,
+    pub outlines: Vec<Option<PartOutline>>,
     pub view: View,
     pub selected_part: Option<usize>,
     pub selected_net: Option<NetId>,
     /// 0 = off; 1..=3 jumper-expansion levels.
     pub expansion: u8,
+    /// Show the far side's parts as faint ghosts under the facing side.
+    pub ghost_back: bool,
     pub center_request: Option<CenterRequest>,
     pub flash_until: f64,
     pub inboard_query: String,
@@ -37,14 +105,17 @@ impl BoardTab {
         if let Some((min, max)) = model.bounds() {
             view.pivot = Point::new((min.x + max.x) / 2.0, (min.y + max.y) / 2.0);
         }
+        let outlines = compute_part_outlines(&model);
         Self {
             board_id,
             title,
             model,
+            outlines,
             view,
             selected_part: None,
             selected_net: None,
             expansion: 0,
+            ghost_back: true,
             center_request: None,
             flash_until: 0.0,
             inboard_query: String::new(),
@@ -198,13 +269,48 @@ impl BoardTab {
         let highlight = self.highlight_map();
         let facing = self.facing();
 
-        // --- outline ---
+        // --- board outline ---
         let outline_stroke = Stroke::new(1.0, Color32::from_rgb(90, 160, 90));
         for (a, b) in &self.model.outline {
             let pa = self.view.to_screen(*a, viewport);
             let pb = self.view.to_screen(*b, viewport);
             if seg_maybe_visible(pa, pb, viewport) {
                 painter.line_segment([pa, pb], outline_stroke);
+            }
+        }
+
+        // --- part outlines (ghosted far side first, facing side on top) ---
+        const PART_COLOR: Color32 = Color32::from_rgb(120, 140, 170);
+        let selected_stroke = Stroke::new(2.0, Color32::from_rgb(255, 130, 60));
+        for pass in [false, true] {
+            // pass false = far side ghosts, pass true = facing side
+            for (idx, outline) in self.outlines.iter().enumerate() {
+                let Some(outline) = outline else { continue };
+                let part = &self.model.parts[idx];
+                let part_faces = part.side == facing || part.side == Side::Both;
+                if part_faces != pass {
+                    continue;
+                }
+                if !pass && !self.ghost_back && self.selected_part != Some(idx) {
+                    continue;
+                }
+                let pts: Vec<Pos2> = outline
+                    .corners
+                    .iter()
+                    .map(|&c| self.view.to_screen(c, viewport))
+                    .collect();
+                let bb = Rect::from_points(&pts);
+                if !viewport.intersects(bb) {
+                    continue;
+                }
+                let stroke = if self.selected_part == Some(idx) {
+                    selected_stroke
+                } else if pass {
+                    Stroke::new(1.0, PART_COLOR)
+                } else {
+                    Stroke::new(1.0, PART_COLOR.gamma_multiply(0.22))
+                };
+                painter.add(egui::Shape::closed_line(pts, stroke));
             }
         }
 
@@ -224,6 +330,12 @@ impl BoardTab {
             let on_facing_side = pin.side == facing || pin.side == Side::Both;
             let part_selected = self.selected_part == Some(pin.part as usize);
             let harvested = self.harvested.contains(&(pin.part as i64));
+
+            // With ghosting off, the far side is fully hidden (except
+            // highlighted nets and the selected part).
+            if !on_facing_side && !self.ghost_back && level.is_none() && !part_selected {
+                continue;
+            }
 
             // Halo behind highlighted nets, visible on both sides.
             if let Some(level) = level {
@@ -265,30 +377,44 @@ impl BoardTab {
             }
         }
 
-        // --- part labels (only when meaningfully readable) ---
-        if self.view.scale > 1.2 {
-            for (idx, part) in self.model.parts.iter().enumerate() {
-                if part.is_dummy || part.pins.is_empty() {
-                    continue;
-                }
-                let facing_part = part.side == facing || part.side == Side::Both;
-                if !facing_part && self.selected_part != Some(idx) {
-                    continue;
-                }
-                if let Some((min, max)) = self.model.part_bounds(idx) {
-                    let center = Point::new((min.x + max.x) / 2.0, (min.y + max.y) / 2.0);
-                    let pos = self.view.to_screen(center, viewport);
-                    if viewport.contains(pos) {
-                        painter.text(
-                            pos,
-                            Align2::CENTER_CENTER,
-                            &part.refdes,
-                            FontId::proportional(11.0),
-                            Color32::from_gray(230),
-                        );
-                    }
-                }
+        // --- refdes labels, centered in each part once it is readable ---
+        for (idx, outline) in self.outlines.iter().enumerate() {
+            let Some(outline) = outline else { continue };
+            let part = &self.model.parts[idx];
+            let part_faces = part.side == facing || part.side == Side::Both;
+            let is_selected = self.selected_part == Some(idx);
+            if !part_faces && !is_selected {
+                continue;
             }
+            let pts: [Pos2; 4] = [
+                self.view.to_screen(outline.corners[0], viewport),
+                self.view.to_screen(outline.corners[1], viewport),
+                self.view.to_screen(outline.corners[2], viewport),
+                self.view.to_screen(outline.corners[3], viewport),
+            ];
+            let bb = Rect::from_points(&pts);
+            if !viewport.intersects(bb) {
+                continue;
+            }
+            let (w, h) = (bb.width(), bb.height());
+            // Big enough on screen to carry a readable label?
+            if !is_selected && (w.max(h) < 26.0 || w.min(h) < 10.0) {
+                continue;
+            }
+            let font_px = (w.min(h) * 0.42).clamp(9.0, 15.0);
+            let pos = self.view.to_screen(outline.center, viewport);
+            let color = if is_selected {
+                Color32::from_rgb(255, 200, 120)
+            } else {
+                Color32::from_gray(215)
+            };
+            painter.text(
+                pos,
+                Align2::CENTER_CENTER,
+                &part.refdes,
+                FontId::proportional(font_px),
+                color,
+            );
         }
 
         // --- selection flash ---
@@ -395,6 +521,42 @@ mod tests {
         pin(&mut b, c, pp3v3, 40.0);
         pin(&mut b, c, gnd, 50.0);
         Arc::new(b.finish(BoardFormat::Brd))
+    }
+
+    #[test]
+    fn two_pin_parts_get_oriented_outlines() {
+        let model = jumper_chain();
+        let outlines = compute_part_outlines(&model);
+        // L7100: pins at (0,0) and (10,0) — outline must contain both pins
+        // with margin, oriented along X.
+        let o = outlines[0].expect("L7100 outline");
+        assert!((o.center.x - 5.0).abs() < 0.01);
+        assert!((o.center.y - 0.0).abs() < 0.01);
+        let xs: Vec<f32> = o.corners.iter().map(|c| c.x).collect();
+        let ys: Vec<f32> = o.corners.iter().map(|c| c.y).collect();
+        let (min_x, max_x) = (xs.iter().cloned().fold(f32::MAX, f32::min), xs.iter().cloned().fold(f32::MIN, f32::max));
+        let (min_y, max_y) = (ys.iter().cloned().fold(f32::MAX, f32::min), ys.iter().cloned().fold(f32::MIN, f32::max));
+        assert!(min_x < 0.0 && max_x > 10.0, "pins inside outline: {min_x}..{max_x}");
+        assert!(min_y < 0.0 && max_y > 0.0);
+        // Oriented: longer along the pin axis than across it.
+        assert!((max_x - min_x) > (max_y - min_y));
+    }
+
+    #[test]
+    fn dummy_and_empty_parts_get_no_outline() {
+        let mut b = BoardBuilder::new();
+        b.add_part(Part {
+            refdes: "...".into(),
+            mfg_code: None,
+            value: None,
+            package: None,
+            side: Side::Top,
+            pins: vec![],
+            is_dummy: true,
+        });
+        let model = b.finish(BoardFormat::Brd);
+        let outlines = compute_part_outlines(&model);
+        assert!(outlines[0].is_none());
     }
 
     #[test]

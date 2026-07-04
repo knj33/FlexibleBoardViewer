@@ -764,6 +764,53 @@ impl App {
             }
 
             if let Some(tab) = self.tabs.get_mut(self.active) {
+                // Canvas toolbar: side switching and view controls, with the
+                // current side always visible at a glance.
+                ui.horizontal(|ui| {
+                    let (side_text, side_color) = if tab.view.bottom {
+                        ("BOTTOM", Color32::from_rgb(255, 160, 70))
+                    } else {
+                        ("TOP", Color32::from_rgb(110, 190, 255))
+                    };
+                    ui.label(
+                        RichText::new(side_text)
+                            .color(side_color)
+                            .strong()
+                            .size(15.0),
+                    );
+                    if ui
+                        .button("⇅ Flip side")
+                        .on_hover_text("Space — view the other side of the board")
+                        .clicked()
+                    {
+                        tab.view.flip_side();
+                    }
+                    if ui
+                        .button("Mirror")
+                        .on_hover_text("M — mirror the view (match the board under your scope)")
+                        .clicked()
+                    {
+                        tab.view.toggle_mirror();
+                    }
+                    if ui.button("Rotate").on_hover_text("R — rotate 90°").clicked() {
+                        tab.view.rotate_ccw();
+                    }
+                    if ui.button("Fit").on_hover_text("F — fit board to window").clicked() {
+                        tab.view.fit_pending = true;
+                    }
+                    ui.separator();
+                    ui.checkbox(&mut tab.ghost_back, "ghost far side")
+                        .on_hover_text("show the other side's parts faintly under this side");
+                    if tab.view.mirror {
+                        ui.separator();
+                        ui.label(
+                            RichText::new("mirrored")
+                                .color(Color32::from_rgb(255, 200, 120))
+                                .size(11.0),
+                        );
+                    }
+                });
+                ui.separator();
                 tab.canvas(ui);
             } else {
                 ui.centered_and_justified(|ui| {
