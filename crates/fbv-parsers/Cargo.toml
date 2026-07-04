@@ -1,0 +1,11 @@
+[package]
+name = "fbv-parsers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fbv-core = { workspace = true }
+flate2 = { workspace = true }
+des = { workspace = true }
+log = { workspace = true }

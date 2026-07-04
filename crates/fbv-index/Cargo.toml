@@ -1,0 +1,19 @@
+[package]
+name = "fbv-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fbv-core = { workspace = true }
+fbv-parsers = { workspace = true }
+fbv-data = { workspace = true }
+sha2 = { workspace = true }
+walkdir = { workspace = true }
+crossbeam-channel = { workspace = true }
+rusqlite = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

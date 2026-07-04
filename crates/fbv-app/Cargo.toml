@@ -1,0 +1,29 @@
+[package]
+name = "fbv-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "flexibleboardviewer"
+path = "src/main.rs"
+
+[dependencies]
+fbv-core = { workspace = true }
+fbv-parsers = { workspace = true }
+fbv-data = { workspace = true }
+fbv-index = { workspace = true }
+fbv-search = { workspace = true }
+eframe = "0.29"
+egui = "0.29"
+rfd = "0.15"
+crossbeam-channel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = "5"
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = "0.11"
+
+[target.'cfg(windows)'.build-dependencies]
+# Reserved for an icon/resource embed step later.

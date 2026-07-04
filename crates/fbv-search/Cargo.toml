@@ -1,0 +1,14 @@
+[package]
+name = "fbv-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fbv-core = { workspace = true }
+fbv-data = { workspace = true }
+rusqlite = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,13 @@
+FlexibleBoardViewer
+
+Boardview file-format parsing logic in crates/fbv-parsers is ported from
+OpenBoardView (https://github.com/OpenBoardView/OpenBoardView), used under
+the MIT License. Copyright (c) the OpenBoardView contributors.
+
+XZZ PCB format understanding is credited to @inflex, @MuertoGB and
+@huertas via the OpenBoardView project. Teboview format research by
+@inflex (https://github.com/inflex/teboviewformat).
+
+No decryption keys for encrypted formats (ASUS FZ, XZZ PCB) are included
+in this repository; users supply their own keys in Settings, mirroring
+OpenBoardView's configuration approach.

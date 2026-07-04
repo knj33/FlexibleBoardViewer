@@ -1,7 +1,10 @@
-# FlexibleBoardViewer — Draft Software Specification
+# FlexibleBoardViewer — Software Specification
 
-> **Status: DRAFT — pending answers in `05-open-questions.md`.** Requirements marked `[Q-n]`
-> depend on an open question. Everything else is proposed as v1 scope.
+> **Status: ACCEPTED 2026-07-04.** All `[Q-n]` markers are resolved in
+> `05-open-questions.md` (decision table at the top). Headline changes from
+> the draft: Windows-only target, open source, XZZ format included,
+> net expansion (FR-VIEW-5 phase-2 item) pulled INTO v1, PDF schematic sync
+> stays phase 2, no enrichment sharing, single-user local library.
 
 ## 1. Product definition
 

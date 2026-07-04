@@ -1,7 +1,25 @@
-# Open Questions — Answers Needed Before Implementation
+# Open Questions — ANSWERED (2026-07-04)
 
-Each question lists my recommendation so you can reply tersely ("Q-1: agree, Q-6: exclude, …").
-Q-1, Q-2, Q-6 and Q-7 gate the architecture; the rest gate scope/priorities.
+All questions were answered by the owner; decisions are recorded inline as
+**DECIDED** entries and drive ADR-0001 and the v1 scope in docs/03.
+
+| Q | Decision |
+|---|---|
+| Q-1 | Windows-only for now (code stays portable at no cost) |
+| Q-2 | Open source, personal use, no monetization — no license infra, no telemetry |
+| Q-3 | PDF schematic sync → phase 2 |
+| Q-4 | v1 ships condition tags + per-part harvested flags only |
+| Q-5 | Single user, local library |
+| Q-6 | All formats supported, including XZZ (personal/open-source use; keys are user-supplied, never shipped) |
+| Q-7 | Stack chosen by criteria fastest/lowest-RAM/safe/scalable → **Rust + egui** (ADR-0001) |
+| Q-8 | No shared enrichment packs |
+| Q-9 | Mycelium-style net expansion **in phase 1** (implemented: levels 1–3 through R/L/F/FB/FL/PR/PL/PF/JP jumpers) |
+| Q-10 | No OBV annotation import |
+| Q-11 | "BoardMaster" ignored |
+| Q-12 | ~15 files initially; scale targets unchanged |
+| Q-13 | Keep the name for now |
+
+Original questions preserved below for the record.
 
 ---
 

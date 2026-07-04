@@ -1,8 +1,13 @@
-# FlexibleBoardViewer — Proposed Architecture
+# FlexibleBoardViewer — Architecture
 
-> **Status: PROPOSAL — the tech-stack choice (Q-7) and platform targets (Q-1) gate this.**
-> Everything below is written to survive any of the three candidate stacks; stack-specific notes
-> are marked. No code will be written until this document is approved.
+> **Status: ACCEPTED with amendments — see ADR-0001.** The stack decision went
+> to **Rust + egui/eframe + rusqlite** (the owner's Q-7 criteria — fastest,
+> lowest RAM, safe, scalable — outweighed the velocity argument for stack B
+> below; §1 kept for the record). The layered design, data architecture,
+> pipeline and search sections below are implemented as specified, with the
+> MVVM section realized as its immediate-mode equivalent (central app state +
+> per-panel functions) and crate names `fbv-core`, `fbv-parsers`, `fbv-data`,
+> `fbv-index`, `fbv-search`, `fbv-app`.
 
 ## 1. Technology stack — candidates and recommendation
 

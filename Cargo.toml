@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fbv-core",
+    "crates/fbv-parsers",
+    "crates/fbv-data",
+    "crates/fbv-index",
+    "crates/fbv-search",
+    "crates/fbv-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/knj33/FlexibleBoardViewer"
+
+[workspace.dependencies]
+fbv-core = { path = "crates/fbv-core" }
+fbv-parsers = { path = "crates/fbv-parsers" }
+fbv-data = { path = "crates/fbv-data" }
+fbv-index = { path = "crates/fbv-index" }
+fbv-search = { path = "crates/fbv-search" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1.3"
+anyhow = "1"
+thiserror = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
+walkdir = "2"
+crossbeam-channel = "0.5"
+flate2 = "1"
+des = "0.8"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# The parsers must stay fast in debug builds so development iteration on real
+# boards is bearable.
+[profile.dev.package.flate2]
+opt-level = 2
+[profile.dev.package.sha2]
+opt-level = 2
