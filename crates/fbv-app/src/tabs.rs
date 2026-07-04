@@ -86,11 +86,17 @@ pub struct BoardTab {
     pub outlines: Vec<Option<PartOutline>>,
     pub view: View,
     pub selected_part: Option<usize>,
+    /// The exact pin last clicked — origin of the netweb fan.
+    pub selected_pin: Option<usize>,
     pub selected_net: Option<NetId>,
     /// 0 = off; 1..=3 jumper-expansion levels.
     pub expansion: u8,
     /// Show the far side's parts as faint ghosts under the facing side.
+    /// Off by default: the facing side shows only its own components.
     pub ghost_back: bool,
+    /// FlexBV-style "netweb": lines from the selected pin to every pad on
+    /// the selected net.
+    pub show_netweb: bool,
     pub center_request: Option<CenterRequest>,
     pub flash_until: f64,
     pub inboard_query: String,
@@ -113,9 +119,11 @@ impl BoardTab {
             outlines,
             view,
             selected_part: None,
+            selected_pin: None,
             selected_net: None,
             expansion: 0,
-            ghost_back: true,
+            ghost_back: false,
+            show_netweb: true,
             center_request: None,
             flash_until: 0.0,
             inboard_query: String::new(),
@@ -137,7 +145,30 @@ impl BoardTab {
     pub fn select_pin(&mut self, pin_idx: usize) {
         let pin = &self.model.pins[pin_idx];
         self.selected_part = Some(pin.part as usize);
+        self.selected_pin = Some(pin_idx);
         self.selected_net = (pin.net != NO_NET).then_some(pin.net);
+    }
+
+    /// Pin the netweb fan radiates from: the clicked pin when it belongs to
+    /// the selected net, otherwise a facing-side member of the net.
+    fn netweb_origin(&self) -> Option<usize> {
+        let net = self.selected_net?;
+        if let Some(pi) = self.selected_pin {
+            if self.model.pins[pi].net == net {
+                return Some(pi);
+            }
+        }
+        let facing = self.facing();
+        let members = &self.model.nets[net as usize].pins;
+        members
+            .iter()
+            .copied()
+            .find(|&pi| {
+                let s = self.model.pins[pi as usize].side;
+                s == facing || s == Side::Both
+            })
+            .or_else(|| members.first().copied())
+            .map(|v| v as usize)
     }
 
     pub fn select_net(&mut self, net: NetId) {
@@ -206,8 +237,9 @@ impl BoardTab {
                         self.view.bottom = false;
                     }
                     self.selected_part = Some(idx);
-                    // Selecting the first pin's net makes the halo demo work
-                    // out of the box.
+                    // Selecting the first pin's net makes the halo and the
+                    // netweb work out of the box.
+                    self.selected_pin = part.pins.first().map(|&pi| pi as usize);
                     self.selected_net = part
                         .pins
                         .first()
@@ -337,9 +369,13 @@ impl BoardTab {
                 continue;
             }
 
-            // Halo behind highlighted nets, visible on both sides.
+            // Halo behind highlighted nets, visible on both sides (dimmer
+            // on the far side so the facing side stays dominant).
             if let Some(level) = level {
-                let halo = level_color(level).gamma_multiply(0.35);
+                let mut halo = level_color(level).gamma_multiply(0.35);
+                if !on_facing_side {
+                    halo = halo.gamma_multiply(0.5);
+                }
                 painter.circle_filled(pos, r * 2.0 + 2.0, halo);
             }
 
@@ -352,8 +388,10 @@ impl BoardTab {
             } else {
                 Color32::from_rgb(120, 150, 190)
             };
-            if !on_facing_side && level.is_none() {
-                color = color.gamma_multiply(0.30);
+            if !on_facing_side {
+                // Far-side pads: highlighted nets stay traceable at half
+                // strength, everything else is a faint ghost.
+                color = color.gamma_multiply(if level.is_some() { 0.5 } else { 0.30 });
             }
             if part_selected {
                 color = Color32::from_rgb(240, 80, 80);
@@ -374,6 +412,35 @@ impl BoardTab {
                 if dist < (r + 6.0).max(9.0) && hover_pin.map(|(_, d)| dist < d).unwrap_or(true) {
                     hover_pin = Some((i, dist));
                 }
+            }
+        }
+
+        // --- netweb: lines from the selected pin to every pad on the net,
+        // FlexBV style, so the rail's reach is visible at a glance ---
+        if self.show_netweb {
+            if let (Some(net), Some(origin)) = (self.selected_net, self.netweb_origin()) {
+                let o = self.view.to_screen(self.model.pins[origin].pos, viewport);
+                let near = Stroke::new(1.2, Color32::from_rgba_unmultiplied(255, 220, 60, 140));
+                let far = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 220, 60, 55));
+                for &pi in &self.model.nets[net as usize].pins {
+                    let pi = pi as usize;
+                    if pi == origin {
+                        continue;
+                    }
+                    let pin = &self.model.pins[pi];
+                    let p = self.view.to_screen(pin.pos, viewport);
+                    if !seg_maybe_visible(o, p, viewport) {
+                        continue;
+                    }
+                    let on_face = pin.side == facing || pin.side == Side::Both;
+                    painter.line_segment([o, p], if on_face { near } else { far });
+                }
+                // Mark the origin so the fan's root is obvious.
+                painter.circle_stroke(
+                    o,
+                    6.0,
+                    Stroke::new(1.5, Color32::from_rgb(255, 220, 60)),
+                );
             }
         }
 
@@ -456,6 +523,7 @@ impl BoardTab {
             }
         } else if response.clicked() {
             self.selected_part = None;
+            self.selected_pin = None;
             self.selected_net = None;
         }
     }
@@ -521,6 +589,38 @@ mod tests {
         pin(&mut b, c, pp3v3, 40.0);
         pin(&mut b, c, gnd, 50.0);
         Arc::new(b.finish(BoardFormat::Brd))
+    }
+
+    #[test]
+    fn netweb_origin_prefers_clicked_pin_then_facing_side() {
+        let model = jumper_chain();
+        let mut tab = BoardTab::new(1, "t".into(), model.clone());
+        let ppbus = model.nets.iter().position(|n| n.name == "PPBUS_G3H").unwrap() as NetId;
+
+        // No selection: no origin.
+        assert!(tab.netweb_origin().is_none());
+
+        // Net selected without a pin: falls back to a member pin.
+        tab.select_net(ppbus);
+        let origin = tab.netweb_origin().unwrap();
+        assert_eq!(model.pins[origin].net, ppbus);
+
+        // Clicking a specific pin on the net makes it the origin.
+        let l7100_pin0 = model.parts[0].pins[0] as usize;
+        tab.select_pin(l7100_pin0);
+        assert_eq!(tab.netweb_origin(), Some(l7100_pin0));
+
+        // A clicked pin on a DIFFERENT net than the selected one is ignored.
+        let gnd_pin = model
+            .pins
+            .iter()
+            .position(|p| model.nets[p.net as usize].name == "GND")
+            .unwrap();
+        tab.selected_pin = Some(gnd_pin);
+        tab.selected_net = Some(ppbus);
+        let origin = tab.netweb_origin().unwrap();
+        assert_ne!(origin, gnd_pin);
+        assert_eq!(model.pins[origin].net, ppbus);
     }
 
     #[test]

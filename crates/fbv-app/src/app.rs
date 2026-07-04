@@ -286,6 +286,7 @@ impl App {
             }
             if esc {
                 tab.selected_part = None;
+                tab.selected_pin = None;
                 tab.selected_net = None;
             }
             if ctrl_f {
@@ -594,7 +595,7 @@ impl App {
                     }
                     ui.add_space(6.0);
                     ui.label(RichText::new("Pins").strong());
-                    let mut select_net = None;
+                    let mut select_pin_net: Option<(usize, fbv_core::NetId)> = None;
                     egui::ScrollArea::vertical()
                         .id_salt("pins_scroll")
                         .max_height(220.0)
@@ -616,11 +617,13 @@ impl App {
                                 if ui.selectable_label(selected, label).clicked()
                                     && pin.net != fbv_core::NO_NET
                                 {
-                                    select_net = Some(pin.net);
+                                    select_pin_net = Some((pi as usize, pin.net));
                                 }
                             }
                         });
-                    if let Some(n) = select_net {
+                    if let Some((pi, n)) = select_pin_net {
+                        // The clicked pin becomes the netweb origin.
+                        tab.selected_pin = Some(pi);
                         tab.select_net(n);
                     }
                 } else {
@@ -726,6 +729,9 @@ impl App {
                         }
                     });
                 if let Some(n) = select_net {
+                    // Selected from the net list: no specific pin, the
+                    // netweb origin falls back to a facing-side member.
+                    tab.selected_pin = None;
                     tab.select_net(n);
                 }
                 if let Some(i) = center_part {
@@ -801,6 +807,8 @@ impl App {
                     ui.separator();
                     ui.checkbox(&mut tab.ghost_back, "ghost far side")
                         .on_hover_text("show the other side's parts faintly under this side");
+                    ui.checkbox(&mut tab.show_netweb, "net lines")
+                        .on_hover_text("fan lines from the clicked pin to every pad on its net");
                     if tab.view.mirror {
                         ui.separator();
                         ui.label(
