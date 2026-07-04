@@ -18,7 +18,14 @@ mod bvr;
 mod cad;
 mod cst;
 mod fz;
+mod gencad;
 mod xzz;
+
+/// Bumped whenever detection or a parser materially improves, so files that
+/// previously landed in quarantine are retried instead of skipped forever.
+/// Generation log: 1 = initial release; 2 = GenCAD support + relaxed
+/// Samsung CAD detection.
+pub const PARSER_GENERATION: i64 = 2;
 
 use fbv_core::{BoardFormat, BoardModel};
 use std::path::Path;
@@ -72,7 +79,7 @@ impl Default for ParseContext<'_> {
 
 /// All file extensions worth inspecting during library import.
 pub const KNOWN_EXTENSIONS: &[&str] = &[
-    "brd", "bdv", "bv", "bvr", "bvr2", "bvr3", "asc", "cad", "cst", "fz", "pcb",
+    "brd", "bdv", "bv", "bvr", "bvr2", "bvr3", "asc", "cad", "gcd", "cst", "fz", "pcb",
 ];
 
 /// Content-based format detection; falls back to the extension only for
@@ -97,6 +104,11 @@ pub fn detect(bytes: &[u8], path: Option<&Path>) -> Option<BoardFormat> {
     }
     if bdv::verify(bytes) {
         return Some(BoardFormat::Bdv);
+    }
+    // GenCAD before Samsung CAD: both commonly ship as ".cad", but their
+    // content signatures are mutually exclusive.
+    if gencad::verify(bytes) {
+        return Some(BoardFormat::GenCad);
     }
     if cad::verify(bytes) {
         return Some(BoardFormat::Cad);
@@ -125,6 +137,7 @@ pub fn parse(
         BoardFormat::Bvr3 => bvr::parse_v3(bytes),
         BoardFormat::Asc => asc::parse(bytes, ctx),
         BoardFormat::Cad => cad::parse(bytes),
+        BoardFormat::GenCad => gencad::parse(bytes),
         BoardFormat::Cst => cst::parse(bytes),
         BoardFormat::Fz => fz::parse(bytes, ctx),
         BoardFormat::XzzPcb => xzz::parse(bytes, ctx),

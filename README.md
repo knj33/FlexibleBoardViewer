@@ -26,11 +26,14 @@ the code also builds on Linux/macOS.
   imported board; field filters (`ref:`, `net:`, `pn:`, `val:`, `pkg:`,
   `board:`, `model:`), prefix matching, instant results; click-to-open-and-center.
 - **Formats**: Test_Link BRD (plain + obfuscated), BRD2, Toptest BDV
-  (plain + obfuscated), BVR v1/v3, PADS ASC (directory), Samsung CAD, CST,
-  ASUS FZ (RC6+zlib), XZZ PCB (XOR+DES). Content-based detection —
-  extensions are not trusted. Encrypted formats need user-supplied keys in
-  Settings (same values OpenBoardView users configure); no keys ship in
-  this repository.
+  (plain + obfuscated), BVR v1/v3, PADS ASC (directory), **GenCAD**
+  (`.cad`/`.gcd`, incl. part numbers/values from `$DEVICES`), Samsung CAD,
+  CST, ASUS FZ (RC6+zlib), XZZ PCB (XOR+DES). Content-based detection —
+  extensions are not trusted (".cad" alone is three different formats).
+  Encrypted formats need user-supplied keys in Settings (same values
+  OpenBoardView users configure); no keys ship in this repository.
+  Files that failed under an older version are retried automatically
+  after parser upgrades.
 
 ## Build & run
 

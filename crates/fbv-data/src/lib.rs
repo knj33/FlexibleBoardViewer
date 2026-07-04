@@ -17,7 +17,7 @@ use rusqlite::{params, Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Index schema generation: bump to force re-index of already-imported
 /// boards after extraction logic changes.
@@ -113,6 +113,16 @@ impl Database {
         if version >= SCHEMA_VERSION {
             return Ok(());
         }
+        if version == 1 {
+            // v2: quarantine entries remember which parser generation failed
+            // on them, so parser upgrades automatically retry old failures.
+            self.conn.execute_batch(
+                "ALTER TABLE quarantine ADD COLUMN parser_gen INTEGER NOT NULL DEFAULT 0;",
+            )?;
+            self.conn
+                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            return Ok(());
+        }
         self.conn.execute_batch(
             r#"
             BEGIN;
@@ -166,11 +176,12 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS nets_board ON nets(board_id);
             CREATE TABLE IF NOT EXISTS quarantine(
-                path    TEXT PRIMARY KEY,
-                reason  TEXT NOT NULL,
-                size    INTEGER NOT NULL,
-                mtime   INTEGER NOT NULL,
-                seen_at INTEGER NOT NULL
+                path       TEXT PRIMARY KEY,
+                reason     TEXT NOT NULL,
+                size       INTEGER NOT NULL,
+                mtime      INTEGER NOT NULL,
+                seen_at    INTEGER NOT NULL,
+                parser_gen INTEGER NOT NULL DEFAULT 0
             );
             CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
                 kind UNINDEXED,
@@ -430,23 +441,48 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn quarantine(&self, path: &Path, reason: &str, size: i64, mtime: i64) -> Result<()> {
+    pub fn quarantine(
+        &self,
+        path: &Path,
+        reason: &str,
+        size: i64,
+        mtime: i64,
+        parser_gen: i64,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO quarantine(path, reason, size, mtime, seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(path) DO UPDATE SET reason = ?2, size = ?3, mtime = ?4, seen_at = ?5",
-            params![path.to_string_lossy(), reason, size, mtime, now()],
+            "INSERT INTO quarantine(path, reason, size, mtime, seen_at, parser_gen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(path) DO UPDATE
+             SET reason = ?2, size = ?3, mtime = ?4, seen_at = ?5, parser_gen = ?6",
+            params![path.to_string_lossy(), reason, size, mtime, now(), parser_gen],
         )?;
         Ok(())
     }
 
-    /// True when this exact file (path+size+mtime) already failed before —
-    /// skip it instead of re-parsing on every scan.
-    pub fn is_quarantined(&self, path: &Path, size: i64, mtime: i64) -> Result<bool> {
+    /// True when this exact file (path+size+mtime) already failed under the
+    /// *current* parser generation — skip it instead of re-parsing on every
+    /// scan. Files that failed under an older generation are retried.
+    pub fn is_quarantined(
+        &self,
+        path: &Path,
+        size: i64,
+        mtime: i64,
+        parser_gen: i64,
+    ) -> Result<bool> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT 1 FROM quarantine WHERE path = ?1 AND size = ?2 AND mtime = ?3",
+            "SELECT 1 FROM quarantine
+             WHERE path = ?1 AND size = ?2 AND mtime = ?3 AND parser_gen = ?4",
         )?;
-        Ok(stmt.exists(params![path.to_string_lossy(), size, mtime])?)
+        Ok(stmt.exists(params![path.to_string_lossy(), size, mtime, parser_gen])?)
+    }
+
+    /// Drops a quarantine entry (the file imported successfully after all).
+    pub fn unquarantine(&self, path: &Path) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM quarantine WHERE path = ?1",
+            params![path.to_string_lossy()],
+        )?;
+        Ok(())
     }
 
     pub fn list_quarantine(&self) -> Result<Vec<QuarantineRow>> {
@@ -585,12 +621,16 @@ mod tests {
     }
 
     #[test]
-    fn quarantine_dedup() {
+    fn quarantine_dedup_and_parser_generation_retry() {
         let db = Database::open_in_memory().unwrap();
         let p = Path::new("/lib/junk.brd");
-        db.quarantine(p, "unrecognized", 10, 1).unwrap();
-        assert!(db.is_quarantined(p, 10, 1).unwrap());
-        assert!(!db.is_quarantined(p, 10, 2).unwrap()); // changed file: retry
+        db.quarantine(p, "unrecognized", 10, 1, 1).unwrap();
+        assert!(db.is_quarantined(p, 10, 1, 1).unwrap());
+        assert!(!db.is_quarantined(p, 10, 2, 1).unwrap()); // changed file: retry
+        // Newer parser generation: same file gets retried automatically.
+        assert!(!db.is_quarantined(p, 10, 1, 2).unwrap());
         assert_eq!(db.list_quarantine().unwrap().len(), 1);
+        db.unquarantine(p).unwrap();
+        assert_eq!(db.list_quarantine().unwrap().len(), 0);
     }
 }

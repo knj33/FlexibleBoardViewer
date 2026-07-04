@@ -9,7 +9,11 @@ use fbv_core::{BoardBuilder, BoardFormat, BoardModel, Part, Pin, Point, Side};
 use std::collections::HashMap;
 
 pub fn verify(buf: &[u8]) -> bool {
-    find_in_buf("###Panel Added", buf) && find_in_buf("C_PIN", buf)
+    // OBV requires the "###Panel Added" banner, but Samsung-variant files
+    // circulate without it; COMP + C_PIN records are signature enough
+    // (GenCAD — the other ".cad" — never contains C_PIN and is detected
+    // first anyway).
+    find_in_buf("C_PIN", buf) && find_in_buf("COMP", buf)
 }
 
 /// Samsung CAD writes nets as "/NETNAME"; the leading slash is dropped.

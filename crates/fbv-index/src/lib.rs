@@ -177,7 +177,9 @@ pub fn run_import(
             let already = known
                 .exists(rusqlite::params![f.to_string_lossy(), size, mtime])
                 .unwrap_or(false)
-                || db.is_quarantined(&f, size, mtime).unwrap_or(false);
+                || db
+                    .is_quarantined(&f, size, mtime, fbv_parsers::PARSER_GENERATION)
+                    .unwrap_or(false);
             if already {
                 skipped += 1;
                 let _ = events.send(ImportEvent::Skipped { path: f });
@@ -264,6 +266,10 @@ pub fn run_import(
                             match insert {
                                 Ok(board_id) => {
                                     let _ = cache.store(&sha, &model);
+                                    // A file that failed under an older
+                                    // parser generation now succeeds: clear
+                                    // it from Problems.
+                                    let _ = db.unquarantine(&parsed.path);
                                     imported += 1;
                                     let _ = events.send(ImportEvent::Imported {
                                         path: parsed.path,
@@ -277,6 +283,7 @@ pub fn run_import(
                                         &format!("db error: {e}"),
                                         parsed.size,
                                         parsed.mtime,
+                                        fbv_parsers::PARSER_GENERATION,
                                     );
                                     let _ = events.send(ImportEvent::Failed {
                                         path: parsed.path,
@@ -296,7 +303,13 @@ pub fn run_import(
                 }
                 Err(reason) => {
                     failed += 1;
-                    let _ = db.quarantine(&parsed.path, &reason, parsed.size, parsed.mtime);
+                    let _ = db.quarantine(
+                        &parsed.path,
+                        &reason,
+                        parsed.size,
+                        parsed.mtime,
+                        fbv_parsers::PARSER_GENERATION,
+                    );
                     let _ = events.send(ImportEvent::Failed {
                         path: parsed.path,
                         reason,
@@ -445,6 +458,81 @@ Pins:
             })
             .unwrap();
         assert_eq!(finished2, (0, 0, 0, 3));
+    }
+
+    const GENCAD: &str = "$HEADER
+GENCAD 1.4
+UNITS THOU
+$ENDHEADER
+$SHAPES
+SHAPE S1
+PIN 1 P1 0 0
+$ENDSHAPES
+$COMPONENTS
+COMPONENT U5300
+DEVICE D1
+PLACE 100 100
+LAYER TOP
+ROTATION 0
+SHAPE S1 0 0
+$ENDCOMPONENTS
+$SIGNALS
+SIGNAL PPBUS_G3H
+NODE U5300 1
+$ENDSIGNALS
+$DEVICES
+DEVICE D1
+PART ISL9239
+$ENDDEVICES
+";
+
+    #[test]
+    fn gencad_cad_files_import_and_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write(dir.path(), "quanta_board.cad", GENCAD);
+        let mut db = Database::open_in_memory().unwrap();
+        let cache = BlobCache::new(dir.path().join("cache")).unwrap();
+        let (tx, rx) = unbounded();
+        let (_ct, cr) = unbounded::<()>();
+        run_import(&mut db, &cache, &[p], Keys::default(), &tx, &cr).unwrap();
+        let ok = rx
+            .try_iter()
+            .any(|e| matches!(e, ImportEvent::Imported { .. }));
+        assert!(ok, "GenCAD .cad file must import");
+        let rows = db.list_boards().unwrap();
+        assert_eq!(rows[0].format, "GenCAD");
+        assert_eq!(rows[0].part_count, 1);
+        // Part number from $DEVICES is searchable metadata.
+        let pn: String = db
+            .connection()
+            .query_row("SELECT part_number FROM parts LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pn, "ISL9239");
+    }
+
+    #[test]
+    fn old_generation_quarantine_is_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = write(dir.path(), "board.cad", GENCAD);
+        let size = std::fs::metadata(&p).unwrap().len() as i64;
+        let mtime = file_mtime(&p);
+
+        let mut db = Database::open_in_memory().unwrap();
+        // Simulate: an older app version failed on this exact file.
+        db.quarantine(&p, "unrecognized format", size, mtime, 1)
+            .unwrap();
+
+        let cache = BlobCache::new(dir.path().join("cache")).unwrap();
+        let (tx, rx) = unbounded();
+        let (_ct, cr) = unbounded::<()>();
+        run_import(&mut db, &cache, &[p], Keys::default(), &tx, &cr).unwrap();
+        assert!(
+            rx.try_iter()
+                .any(|e| matches!(e, ImportEvent::Imported { .. })),
+            "file quarantined under an older parser generation must be retried"
+        );
+        // And it left the Problems list.
+        assert!(db.list_quarantine().unwrap().is_empty());
     }
 
     #[test]
